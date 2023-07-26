@@ -24,6 +24,10 @@ async def process_hl7_messages(hl7_reader, hl7_writer):
 
     peername = hl7_writer.get_extra_info("peername")
     print(f"Connection established {peername}")
+
+    # Retrieve the identifier associated with this server instance.
+    identifier = hl7_writer.get_extra_info("identifier")
+
     try:
 
         # We're going to keep listening until the writer
@@ -36,7 +40,8 @@ async def process_hl7_messages(hl7_reader, hl7_writer):
                 "machine_make": msg_lines[0].split('|')[3],
                 "machine_model": msg_lines[0].split('|')[2],
                 "lab_test_name": msg_lines[3].split('|')[3],
-                "message": str_hl7_message
+                "message": str_hl7_message,
+                "machine_id": identifier
             }
             send_to_erpnext(message, str(datetime.now()))
             # Now let's send the ACK and wait for the
@@ -55,14 +60,21 @@ async def process_hl7_messages(hl7_reader, hl7_writer):
 
 async def main():
     try:
-        # Start the server in a with clause to make sure we
-        # close it
-        async with await start_hl7_server(
-            process_hl7_messages, port=5600
-        ) as hl7_server:
-            # And now we server forever. Or until we are
-            # cancelled...
-            await hl7_server.serve_forever()
+        # Define a list of ports and identifiers.
+        # Each tuple contains (port, identifier) pairs.
+        ports_and_identifiers = [(5600, "Port_1"), (5601, "Port_2"), (5602, "Port_3")]
+
+        # Create a list of tasks for each port.
+        tasks = [start_hl7_server(process_hl7_messages, port=port) for port, _ in ports_and_identifiers]
+
+        # Start all the servers concurrently.
+        async with asyncio.gather(*tasks) as hl7_servers:
+            # Associate each server instance with its identifier using a closure.
+            for server, (_, identifier) in zip(hl7_servers, ports_and_identifiers):
+                server.identifier = identifier
+
+            # And now we serve forever. Or until we are cancelled...
+            await asyncio.gather(*[server.serve_forever() for server in hl7_servers])
     except asyncio.CancelledError:
         # Cancelled errors are expected
         pass
